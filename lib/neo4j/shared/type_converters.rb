@@ -80,15 +80,19 @@ module Neo4j::Shared
         # Converts the given DateTime (UTC) value to an Integer.
         # Only utc times are supported !
         def to_db(value)
-          if value.class == Date
-            Time.utc(value.year, value.month, value.day, 0, 0, 0).to_i
+          if value.class == Date || value.class == DateTime
+            Time.utc(value.year, value.month, value.day, 0, 0, 0).to_i * 1000
           else
-            value.utc.to_i
+            (value.utc.to_i * 1000) + (value.utc.usec / 1000)
           end
         end
 
         def to_ruby(value)
-          Time.at(value).utc
+          if value.class == Date || value.class == DateTime || value.class == Time
+            Time.at(value).utc
+          else
+            Time.at(value / 1000, (value % 1000) * 1000).utc
+          end
         end
         alias_method :call, :to_ruby
       end
