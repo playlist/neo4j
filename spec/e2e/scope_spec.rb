@@ -1,7 +1,8 @@
 # module Neo4j::ActiveNode::Scope
 
 describe 'Neo4j::NodeMixin::Scope' do
-  before(:each) do
+  before do
+    delete_db
     clear_model_memory_caches
 
     stub_active_node_class('Person') do
@@ -38,6 +39,12 @@ describe 'Neo4j::NodeMixin::Scope' do
     it 'has the scope of the parent class' do
       expect(Mutant.scope?(:only_living)).to be true
       expect(Mutant.all.only_living.to_a).to eq([alive])
+    end
+
+    it 'inherits correctly overwritten scopes' do
+      Mutant.scope :only_living, -> { where('1=0') }
+      expect(Mutant.scope?(:only_living)).to be true
+      expect(Mutant.all.only_living.to_a).to eq([])
     end
   end
 
@@ -90,6 +97,26 @@ describe 'Neo4j::NodeMixin::Scope' do
     end
   end
 
+  describe 'Person.scope :great_students, -> (identifier, score) { where("#{identifier}.score > ?", score)' do
+    before(:each) do
+      Person.scope :great_students, ->(identifier, score) { where("#{identifier}.score > ?", score || 41) }
+    end
+
+    describe 'Person.great_students.to_a' do
+      subject do
+        Person.as(:foo).great_students(:foo, 41).to_a
+      end
+      it { is_expected.to match_array([@a, @b, @b1, @b2]) }
+    end
+
+    describe 'Person.great_students.to_a with omitted parameter' do
+      subject do
+        Person.as(:foo).great_students(:foo).to_a
+      end
+      it { is_expected.to match_array([@a, @b, @b1, @b2]) }
+    end
+  end
+
   describe 'Person.scope :great_students, -> (identifier) { where("#{identifier}.score > 41")' do
     before(:each) do
       Person.scope :great_students, ->(identifier) { where("#{identifier}.score > 41") }
@@ -104,46 +131,65 @@ describe 'Neo4j::NodeMixin::Scope' do
     end
   end
 
-  describe 'Person.scope :top_students, -> { where(score: 42)}' do
+  describe 'Person.scope :top_students, -> { where("score = ?", 42) }' do
     before(:each) do
-      Person.scope :top_students, -> { where(score: 42) }
+      Person.scope :top_students, ->(name) { all(name || :tstud).where("#{name || :tstud}.score = ?", 42) }
     end
 
-
-    describe 'Person.top_students.to_a' do
-      subject do
-        Person.top_students.to_a
-      end
-      it { is_expected.to match_array([@a, @b, @b1, @b2]) }
-    end
-
-    describe 'person.friends.top_students.to_a' do
-      subject do
-        @a.friends.top_students.to_a
-      end
-      it { is_expected.to match_array([@b]) }
-    end
-
-    describe 'person.friends.friend.top_students.to_a' do
-      subject do
-        @a.friends.friends.top_students.to_a
-      end
-      it { is_expected.to match_array([@b1, @b2]) }
-    end
-
-    describe 'person.top_students.friends.to_a' do
-      subject do
-        @a.friends.top_students.friends.to_a
-      end
-      it { is_expected.to match_array([@b1, @b2]) }
-    end
+    it_behaves_like 'scopable model'
 
     describe 'person.top_students.top_students.to_a' do
       subject do
-        Person.top_students.friends.top_students.to_a
+        Person.top_students(:tstud1).friends.top_students(:tstud2).to_a
       end
       it { is_expected.to match_array([@b, @b1, @b2]) }
     end
   end
-  # end
+
+  describe 'Person.scope :top_students, -> { where(score: 42) }' do
+    before(:each) do
+      Person.scope :top_students, -> { where(score: 42) }
+    end
+
+    it_behaves_like 'scopable model'
+    it_behaves_like 'chained scopable model'
+  end
+
+  describe 'Person.scope :top_students, -> { another_scope }' do
+    before(:each) do
+      Person.scope :another_scope, -> { where(score: 42) }
+      Person.scope :top_students, -> { another_scope }
+    end
+
+    it_behaves_like 'scopable model'
+    it_behaves_like 'chained scopable model'
+  end
+
+  describe 'Person.scope :top_friends, -> { friends.where(score: 42) }' do
+    before(:each) do
+      Person.scope :top_friends, -> { friends.where(score: 42) }
+    end
+
+    describe 'Person.top_friends.to_a' do
+      subject do
+        Person.top_friends
+      end
+
+      it { is_expected.to match_array([@b, @b1, @b2]) }
+    end
+  end
+
+  describe 'Person.scope :having_friends_being_top_students, -> { all(:p).friends(:f).where(score: 42).query_as(Person, :p) }' do
+    before(:each) do
+      Person.scope :having_friends_being_top_students, -> { all(:p).branch { friends(:f).where(score: 42) } }
+    end
+
+    describe 'Person.having_friends_being_top_students.to_a' do
+      subject do
+        Person.having_friends_being_top_students
+      end
+
+      it { is_expected.to match_array([@a, @b, @b]) }
+    end
+  end
 end

@@ -1,7 +1,9 @@
 module Neo4j
   module ActiveNode
     module Query
+      # rubocop:disable Metrics/ClassLength
       class QueryProxy
+        # rubocop:enable Metrics/ClassLength
         include Neo4j::ActiveNode::Query::QueryProxyEnumerable
         include Neo4j::ActiveNode::Query::QueryProxyMethods
         include Neo4j::ActiveNode::Query::QueryProxyMethodsOfMassUpdating
@@ -54,7 +56,8 @@ module Neo4j
         end
 
         def inspect
-          "#<QueryProxy #{@context} CYPHER: #{self.to_cypher.inspect}>"
+          formatted_nodes = Neo4j::ActiveNode::NodeListFormatter.new(to_a)
+          "#<QueryProxy #{@context} #{formatted_nodes.inspect}>"
         end
 
         attr_reader :start_object, :query_proxy
@@ -164,13 +167,7 @@ module Neo4j
 
         # To add a relationship for the node for the association on this QueryProxy
         def <<(other_node)
-          if @start_object._persisted_obj
-            create(other_node, {})
-          elsif @association
-            @start_object.defer_create(@association.name, other_node)
-          else
-            fail 'Another crazy error!'
-          end
+          _create_relation_or_defer(other_node)
           self
         end
 
@@ -186,8 +183,7 @@ module Neo4j
         #
         # @return [QueryProxy] A new QueryProxy
         def branch(&block)
-          fail LocalJumpError, 'no block given' if !block
-
+          fail LocalJumpError, 'no block given' if block.nil?
           instance_eval(&block).query.proxy_as(self.model, identity)
         end
 
@@ -201,7 +197,7 @@ module Neo4j
           fail 'Can only create relationships on associations' if !@association
           other_nodes = _nodeify!(*other_nodes)
 
-          Neo4j::Transaction.run do
+          Neo4j::ActiveBase.run_transaction do
             other_nodes.each do |other_node|
               other_node.save unless other_node.neo_id
 
@@ -265,7 +261,21 @@ module Neo4j
           end
         end
 
+        def unpersisted_start_object?
+          @start_object && @start_object.new_record?
+        end
+
         protected
+
+        def _create_relation_or_defer(other_node)
+          if @start_object._persisted_obj
+            create(other_node, {})
+          elsif @association
+            @start_object.defer_create(@association.name, other_node)
+          else
+            fail 'Another crazy error!'
+          end
+        end
 
         # Methods are underscored to prevent conflict with user class methods
         def _add_params(params)
@@ -292,7 +302,7 @@ module Neo4j
         end
 
         def _query
-          _session.query(context: @context)
+          Neo4j::ActiveBase.new_query(context: @context)
         end
 
         # TODO: Refactor this. Too much happening here.

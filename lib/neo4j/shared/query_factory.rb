@@ -36,7 +36,7 @@ module Neo4j::Shared
     end
 
     def base_query
-      @base_query || Neo4j::Session.current.query
+      @base_query || Neo4j::ActiveBase.new_query
     end
 
     protected
@@ -69,7 +69,8 @@ module Neo4j::Shared
 
     def create_query
       return match_query if graph_object.persisted?
-      base_query.create(identifier => {graph_object.labels_for_create => graph_object.props_for_create})
+      labels = graph_object.labels_for_create.map { |l| ":`#{l}`" }.join
+      base_query.create("(#{identifier}#{labels} {#{identifier}_params})").params(identifier_params => graph_object.props_for_create)
     end
   end
 

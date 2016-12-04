@@ -40,8 +40,7 @@ module Neo4j::ActiveRel
     # @param [Symbol, String] name of the attribute to increment
     # @param [Integer, Float] amount to increment
     def concurrent_increment!(attribute, by = 1)
-      query_rel = Neo4j::Session.query.match('()-[n]-()').where(n: {neo_id: neo_id})
-      increment_by_query! query_rel, attribute, by
+      increment_by_query! query_as(:n), attribute, by
     end
 
     def create_model
@@ -52,29 +51,22 @@ module Neo4j::ActiveRel
       true
     end
 
+    def query_as(var)
+      # This should query based on the nodes, not the rel neo_id, I think
+      # Also, picky point: Should the var be `n`?
+      self.class.query_as(neo_id, var)
+    end
+
     module ClassMethods
       # Creates a new relationship between objects
       # @param [Hash] props the properties the new relationship should have
-      def create(props = {})
-        relationship_props = extract_association_attributes!(props) || {}
-        new(props).tap do |obj|
-          relationship_props.each do |prop, value|
-            obj.send("#{prop}=", value)
-          end
-          obj.save
-        end
+      def create(*args)
+        new(*args).tap(&:save)
       end
 
       # Same as #create, but raises an error if there is a problem during save.
       def create!(*args)
-        props = args[0] || {}
-        relationship_props = extract_association_attributes!(props) || {}
-        new(props).tap do |obj|
-          relationship_props.each do |prop, value|
-            obj.send("#{prop}=", value)
-          end
-          obj.save!
-        end
+        new(*args).tap(&:save!)
       end
 
       def create_method
@@ -82,7 +74,11 @@ module Neo4j::ActiveRel
       end
 
       def load_entity(id)
-        Neo4j::Relationship.load(id)
+        query_as(id).pluck(:r).first
+      end
+
+      def query_as(neo_id, var = :r)
+        Neo4j::ActiveBase.new_query.match("()-[#{var}]-()").where(var => {neo_id: neo_id})
       end
     end
 
@@ -91,6 +87,10 @@ module Neo4j::ActiveRel
     end
 
     private
+
+    def destroy_query
+      query_as(:r).delete(:r)
+    end
 
     def validate_node_classes!
       [from_node, to_node].each do |node|

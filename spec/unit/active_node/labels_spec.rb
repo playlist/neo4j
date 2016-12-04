@@ -25,38 +25,17 @@ describe Neo4j::ActiveNode::Labels do
 
   describe Neo4j::ActiveNode::Labels::ClassMethods do
     describe 'index and inheritance' do
-      class MyBaseClass
-        include Neo4j::ActiveNode
-        property :things
-      end
-      class MySubClass < MyBaseClass
-        property :stuff
+      before do
+        stub_active_node_class('MyBaseClass') do
+          property :things
+        end
+        stub_named_class('MySubClass', MyBaseClass) do
+          property :stuff
+        end
       end
 
       it 'should have labels for baseclass' do
         expect(MySubClass.mapped_label_names).to match_array([:MyBaseClass, :MySubClass])
-      end
-
-      # TODO: REVIEW THIS. I do not think its claim has been true since early v3.
-      it 'an index in sub class will exist in base' do
-        base_label = double(:label_base, indexes: {property_keys: []})
-        sub_label = double(:label_sub, indexes: {property_keys: []})
-        # base_label.should_receive(:create_index).with(:things, {}).and_return(:something1)
-        expect(sub_label).to receive(:create_index).with(:things, {}).and_return(:something2)
-        allow(Neo4j::Label).to receive(:create) do |label|
-          {MyBaseClass: base_label, MySubClass: sub_label}[label]
-        end
-        MySubClass.index :things
-      end
-
-      # TODO: REVIEW THIS. I do not think its claim has been true since early v3.
-      it 'an index in base class will not exist in sub class' do
-        base_label = double(:label_base, indexes: {property_keys: []})
-        expect(base_label).to receive(:create_index).with(:things, {}).and_return(:something1)
-        allow(Neo4j::Label).to receive(:create) do |label|
-          {MyBaseClass: base_label}[label]
-        end
-        MyBaseClass.index :things
       end
     end
 
@@ -81,16 +60,18 @@ describe Neo4j::ActiveNode::Labels do
     end
 
     describe 'label' do
-      it 'wraps the mapped_label_name in a Neo4j::Label object' do
+      it 'wraps the mapped_label_name in a Neo4j::Core::Label object' do
         clazz = Class.new do
+          include Neo4j::Shared
           extend Neo4j::ActiveNode::Labels::ClassMethods
           def self.name
             'MyClass'
           end
         end
 
-        expect(Neo4j::Label).to receive(:create).with(:MyClass).and_return('foo')
-        expect(clazz.send(:mapped_label)).to eq('foo')
+        label_double = double('label')
+        expect(Neo4j::Core::Label).to receive(:new).with(:MyClass, Neo4j::ActiveBase.current_session).and_return(label_double)
+        expect(clazz.send(:mapped_label)).to eq(label_double)
       end
     end
 
@@ -157,6 +138,39 @@ describe Neo4j::ActiveNode::Labels do
         end
 
         expect(clazz.mapped_label_names).to match_array([:module, :module1, :module2])
+      end
+    end
+
+    describe 'model_for_labels' do
+      class Event
+        include Neo4j::ActiveNode
+      end
+
+      class URL
+        include Neo4j::ActiveNode
+      end
+
+      module DataSource
+        class URL < ::URL
+          self.mapped_label_name = 'DataSource'
+        end
+
+        class Event < URL
+          self.mapped_label_name = 'Event'
+        end
+      end
+
+      it 'returns the correct model for the node' do
+        classes = [Event, URL, DataSource::URL, DataSource::Event]
+
+        # TODO: not sure why this is not being called when the class is defined
+        classes.reverse_each { |c| Neo4j::ActiveNode::Labels.add_wrapped_class(c) }
+
+        classes.each do |c|
+          labels = c.mapped_label_names
+          model = Neo4j::ActiveNode::Labels.model_for_labels(labels)
+          expect(model).to eq(c)
+        end
       end
     end
   end

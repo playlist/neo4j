@@ -8,6 +8,7 @@ module Neo4j
 
       autoload :Schema
       autoload :IdProperty
+      autoload :Relationships
 
       PROPERTY_ALREADY_DEFINED = 'Property `%{new_property}` is already defined in `%{label}`. '\
                                  'To overwrite, call `remove_property(:%{label}, :%{new_property})` before this method.'.freeze
@@ -49,7 +50,7 @@ module Neo4j
       end
 
       def execute(string, params = {})
-        query(string, params).to_a
+        ActiveBase.query(string, params).to_a
       end
 
       def say_with_time(message)
@@ -65,9 +66,15 @@ module Neo4j
         output "#{subitem ? '   ->' : '--'} #{message}"
       end
 
-      delegate :query, to: Neo4j::Session
+      def query(*args)
+        ActiveBase.new_query(*args)
+      end
 
       protected
+
+      def output(*string_format)
+        puts format(*string_format) unless @silenced
+      end
 
       def transactions?
         self.class.transaction?

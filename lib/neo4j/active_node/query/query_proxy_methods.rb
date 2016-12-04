@@ -17,6 +17,10 @@ module Neo4j
           rels.first
         end
 
+        def as(node_var)
+          new_link(node_var)
+        end
+
         # Give ability to call `#find` on associations to get a scoped find
         # Doesn't pass through via `method_missing` because Enumerable has a `#find` method
         def find(*args)
@@ -37,11 +41,18 @@ module Neo4j
           model ? model.id_property_name : nil
         end
 
+        def distinct
+          new_link.tap do |e|
+            e.instance_variable_set(:@distinct, true)
+          end
+        end
+
         # @return [Integer] number of nodes of this class
         def count(distinct = nil, target = nil)
+          return 0 if unpersisted_start_object?
           fail(Neo4j::InvalidParameterError, ':count accepts `distinct` or nil as a parameter') unless distinct.nil? || distinct == :distinct
           query_with_target(target) do |var|
-            q = distinct.nil? ? var : "DISTINCT #{var}"
+            q = ensure_distinct(var, !distinct.nil?)
             limited_query = self.query.clause?(:limit) ? self.query.break.with(var) : self.query.reorder
             limited_query.pluck("count(#{q}) AS #{var}").first
           end
@@ -61,6 +72,7 @@ module Neo4j
         end
 
         def empty?(target = nil)
+          return true if unpersisted_start_object?
           query_with_target(target) { |var| !self.exists?(nil, var) }
         end
 
@@ -135,8 +147,8 @@ module Neo4j
           fail 'Method invalid when called on Class objects' unless source_object
           result = self.where(params).first
           return result unless result.nil?
-          Neo4j::Transaction.run do
-            node = model.find_or_create_by(params)
+          Neo4j::ActiveBase.run_transaction do
+            node = model.create(params)
             self << node
             return node
           end
@@ -173,7 +185,39 @@ module Neo4j
           where("(#{where_clause})")
         end
 
+        # Matches all nodes having at least a relation
+        #
+        # @example Load all people having a friend
+        #   Person.all.having_rel(:friends).to_a # => Returns a list of `Person`
+        #
+        # @example Load all people having a best friend
+        #   Person.all.having_rel(:friends, best: true).to_a # => Returns a list of `Person`
+        #
+        # @return [QueryProxy] A new QueryProxy
+        def having_rel(association_name, rel_properties = {})
+          association = association_or_fail(association_name)
+          where("(#{identity})#{association.arrow_cypher(nil, rel_properties)}()")
+        end
+
+        # Matches all nodes not having a certain relation
+        #
+        # @example Load all people not having friends
+        #   Person.all.not_having_rel(:friends).to_a # => Returns a list of `Person`
+        #
+        # @example Load all people not having best friends
+        #   Person.all.not_having_rel(:friends, best: true).to_a # => Returns a list of `Person`
+        #
+        # @return [QueryProxy] A new QueryProxy
+        def not_having_rel(association_name, rel_properties = {})
+          association = association_or_fail(association_name)
+          where_not("(#{identity})#{association.arrow_cypher(nil, rel_properties)}()")
+        end
+
         private
+
+        def association_or_fail(association_name)
+          model.associations[association_name] || fail(ArgumentError, "No such association #{association_name}")
+        end
 
         def find_inverse_association!(model, source, association)
           model.associations.values.find do |reverse_association|

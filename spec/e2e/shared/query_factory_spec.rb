@@ -1,9 +1,11 @@
 describe Neo4j::Shared::QueryFactory do
-  before do
+  let!(:factory_from_class) do
     stub_active_node_class('FactoryFromClass') do
       property :name
     end
+  end
 
+  before do
     stub_active_node_class('FactoryToClass') do
       property :name
     end
@@ -14,7 +16,7 @@ describe Neo4j::Shared::QueryFactory do
       property :score
 
       def self.count
-        Neo4j::Session.current.query.match('(n)-[r:FACTORY_REL_CLASS]->()').pluck('count(r)').first
+        new_query.match('(n)-[r:FACTORY_REL_CLASS]->()').pluck('count(r)').first
       end
     end
   end
@@ -30,8 +32,32 @@ describe Neo4j::Shared::QueryFactory do
     context 'unpersisted' do
       it 'builds a query to create' do
         expect do
-          expect(from_node_factory.query.pluck(:from_node).first).to be_a(FactoryFromClass)
+          expect(from_node_factory.query.pluck(:from_node).first.labels).to eq FactoryFromClass.mapped_label_names
         end.to change { FactoryFromClass.count }
+      end
+
+      context 'with a value that might be interpreted as a prop' do
+        let(:from_node) { FactoryFromClass.new(name: '{Tricky .Value}') }
+        it 'creates without error' do
+          expect do
+            expect(from_node_factory.query.pluck(:from_node).first.labels).to eq FactoryFromClass.mapped_label_names
+          end.to change { FactoryFromClass.where(name: from_node.name).count }
+        end
+      end
+
+      context 'with multiple labels' do
+        before do
+          stub_named_class('FromSubclass', factory_from_class { include Neo4j::ActiveNode })
+          FromSubclass.property :other_prop
+        end
+
+        let(:from_node) { FromSubclass.new(other_prop: '{Foo .property}') }
+
+        it 'creates the node with all labels' do
+          expect do
+            expect(from_node_factory.query.pluck(:from_node).first.labels.sort).to eq FromSubclass.mapped_label_names.sort
+          end.to change { FromSubclass.where(name: from_node.name).count }
+        end
       end
     end
 
@@ -53,6 +79,16 @@ describe Neo4j::Shared::QueryFactory do
         expect do
           expect(rel_factory.query.pluck(:rel).first).to be_a(FactoryRelClass)
         end.to change { FactoryRelClass.count }
+      end
+
+      context 'with a value that might be interpreted as a prop' do
+        let(:rel) { FactoryRelClass.new(score: '{9000 ....}') }
+
+        it 'creates without error' do
+          expect do
+            expect(rel_factory.query.pluck(:rel).first).to be_a(FactoryRelClass)
+          end.to change { FactoryRelClass.count }
+        end
       end
     end
 
@@ -80,7 +116,7 @@ describe Neo4j::Shared::QueryFactory do
     end
 
     context 'when set' do
-      before { from_node_factory.instance_variable_set(:@base_query, Neo4j::Session.current.query) }
+      before { from_node_factory.instance_variable_set(:@base_query, new_query) }
 
       it 'returns the existing query' do
         expect(Neo4j::Core::Query).not_to receive(:new)
@@ -96,7 +132,7 @@ describe Neo4j::Shared::QueryFactory do
 
     describe '#base_query=' do
       it 'changes the value of #base_query' do
-        expect { from_node_factory.base_query = Neo4j::Session.current.query }.to change { from_node_factory.base_query }
+        expect { from_node_factory.base_query = new_query }.to change { from_node_factory.base_query }
       end
     end
   end
